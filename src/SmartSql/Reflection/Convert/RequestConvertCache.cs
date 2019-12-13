@@ -7,32 +7,32 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
 using SmartSql.Annotations;
+using SmartSql.Exceptions;
+using SmartSql.TypeHandlers;
 
 namespace SmartSql.Reflection.Convert
 {
+    /// <summary>
+    /// TODO add SmartSqlAlias parameter
+    /// </summary>
     public static class RequestConvertCache<TRequest>
     {
-        public static Func<object, SqlParameterCollection> Convert { get; private set; }
-        static RequestConvertCache()
-        {
-            Convert = RequestConvertCache<TRequest, object>.Convert;
-        }
+        public static Func<object, SqlParameterCollection> Convert => RequestConvertCache<TRequest, object>.Convert;
     }
 
     public static class RequestConvertCache<TRequest, TIgnoreCase>
     {
-        public static Func<object, SqlParameterCollection> Convert { get; private set; }
+        private static Lazy<Func<object, SqlParameterCollection>> _lazyConvert =
+            new Lazy<Func<object, SqlParameterCollection>>(BuildConvert);
 
-        static RequestConvertCache()
-        {
-            BuildConvert();
-        }
+        public static Func<object, SqlParameterCollection> Convert => _lazyConvert.Value;
 
-        private static void BuildConvert()
+        private static Func<object, SqlParameterCollection> BuildConvert()
         {
             var requestType = typeof(TRequest);
             var sourceProps = requestType.GetProperties().Where(p => p.CanRead);
-            var dynamicMethod = new DynamicMethod(Guid.NewGuid().ToString("N"), SqlParameterType.SqlParameterCollection, new[] { CommonType.Object }, requestType, true);
+            var dynamicMethod = new DynamicMethod(Guid.NewGuid().ToString("N"), SqlParameterType.SqlParameterCollection,
+                new[] {CommonType.Object}, requestType, true);
             var ilGen = dynamicMethod.GetILGenerator();
             ilGen.DeclareLocal(SqlParameterType.SqlParameterCollection);
             var ignoreCase = typeof(TIgnoreCase) == typeof(IgnoreCaseType);
@@ -44,24 +44,57 @@ namespace SmartSql.Reflection.Convert
                 ilGen.LoadLocalVar(0);
                 ilGen.LoadString(prop.Name);
                 ilGen.LoadArg(0);
-                ilGen.Emit(OpCodes.Call, prop.GetMethod);
+                ilGen.Call(prop.GetMethod);
                 if (prop.PropertyType.IsValueType)
                 {
                     ilGen.Box(prop.PropertyType);
                 }
+
                 ilGen.LoadType(prop.PropertyType);
                 ilGen.New(SqlParameterType.Ctor.SqlParameter);
+
+                #region  Ensure TypeHanlder
+
                 ilGen.Dup();
                 var column = prop.GetCustomAttribute<ColumnAttribute>();
-                var getHandlerMethod = column?.FieldType != null ? TypeHandlerCacheType.GetHandlerMethod(prop.PropertyType, column?.FieldType)
-                    : PropertyTypeHandlerCacheType.GetHandlerMethod(prop.PropertyType);
-                ilGen.Call(getHandlerMethod);
+                if (column != null && !String.IsNullOrEmpty(column.TypeHandler))
+                {
+                    var typeHandlerField =
+                        NamedTypeHandlerCache.GetTypeHandlerField(column.Alias, column.TypeHandler);
+                    if (typeHandlerField == null)
+                    {
+                        throw new SmartSqlException(
+                            $"Can not find NamedTypeHandler SmartSql.Alias:[{column.Alias}],Name :[{column.TypeHandler}].");
+                    }
+
+                    ilGen.FieldGet(typeHandlerField);
+                }
+                else
+                {
+                    MethodInfo getHandlerMethod = null;
+                    if (column?.FieldType != null)
+                    {
+                        getHandlerMethod = TypeHandlerCacheType.GetHandlerMethod(prop.PropertyType, column.FieldType);
+                    }
+
+                    if (getHandlerMethod == null)
+                    {
+                        getHandlerMethod = PropertyTypeHandlerCacheType.GetHandlerMethod(prop.PropertyType);
+                    }
+
+                    ilGen.Call(getHandlerMethod);
+                }
+
                 ilGen.Call(SqlParameterType.Method.SetTypeHandler);
                 ilGen.Call(SqlParameterType.Method.Add);
+
+                #endregion
             }
+
             ilGen.LoadLocalVar(0);
             ilGen.Return();
-            Convert = (Func<object, SqlParameterCollection>)dynamicMethod.CreateDelegate(typeof(Func<object, SqlParameterCollection>));
+            return (Func<object, SqlParameterCollection>) dynamicMethod.CreateDelegate(
+                typeof(Func<object, SqlParameterCollection>));
         }
     }
 }

@@ -6,6 +6,8 @@ using SmartSql.DyRepository;
 using System;
 using System.Linq;
 using System.Reflection;
+using SmartSql.Exceptions;
+using SmartSql.Utils;
 
 namespace Microsoft.Extensions.DependencyInjection
 {
@@ -51,7 +53,7 @@ namespace Microsoft.Extensions.DependencyInjection
                 ISqlMapper sqlMapper = sp.GetRequiredService<ISqlMapper>(); ;
                 if (!String.IsNullOrEmpty(smartSqlAlias))
                 {
-                    sqlMapper = sp.GetSmartSql(smartSqlAlias).SqlMapper;
+                    sqlMapper = sp.EnsureSmartSql(smartSqlAlias).SqlMapper;
                 }
                 var factory = sp.GetRequiredService<IRepositoryFactory>();
                 return factory.CreateInstance(typeof(T), sqlMapper, scope) as T;
@@ -73,8 +75,7 @@ namespace Microsoft.Extensions.DependencyInjection
             };
             setupOptions(options);
             ScopeTemplateParser templateParser = new ScopeTemplateParser(options.ScopeTemplate);
-            var assembly = Assembly.Load(options.AssemblyString);
-            var allTypes = assembly.GetTypes().Where(options.Filter);
+            var allTypes = TypeScan.Scan(options);
             foreach (var type in allTypes)
             {
                 builder.Services.AddSingleton(type, sp =>
@@ -82,7 +83,7 @@ namespace Microsoft.Extensions.DependencyInjection
                     ISqlMapper sqlMapper = sp.GetRequiredService<ISqlMapper>(); ;
                     if (!String.IsNullOrEmpty(options.SmartSqlAlias))
                     {
-                        sqlMapper = sp.GetSmartSql(options.SmartSqlAlias).SqlMapper;
+                        sqlMapper = sp.EnsureSmartSql(options.SmartSqlAlias).SqlMapper;
                     }
                     var factory = sp.GetRequiredService<IRepositoryFactory>();
                     var scope = string.Empty;
@@ -96,5 +97,4 @@ namespace Microsoft.Extensions.DependencyInjection
             return builder;
         }
     }
-
 }

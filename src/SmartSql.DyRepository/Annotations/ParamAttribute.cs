@@ -16,6 +16,9 @@ namespace SmartSql.DyRepository.Annotations
         /// DbDataParameter.Name
         /// </summary>
         public String Name { get; set; }
-        public Type FieldType { get; set; }
+        /// <summary>
+        /// TypeHandler Name
+        /// </summary>
+        public String TypeHandler { get; set; }
     }
 }

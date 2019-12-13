@@ -14,6 +14,7 @@ namespace SmartSql.Configuration.Tags.TagBuilders
                 Property = GetProperty(xmlNode),
                 Prepend = GetPrepend(xmlNode),
                 ChildTags = new List<ITag>(),
+                PropertyChanged = PropertyChangedUtil.GetPropertyChanged(xmlNode, statement),
                 Statement = statement
             };
         }

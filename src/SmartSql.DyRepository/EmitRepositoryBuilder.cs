@@ -7,11 +7,14 @@ using System.Reflection;
 using System.Reflection.Emit;
 using Microsoft.Extensions.Logging;
 using SmartSql.Annotations;
+using SmartSql.Cache;
 using SmartSql.Configuration;
+using SmartSql.Configuration.Tags;
 using SmartSql.DataSource;
 using SmartSql.DyRepository.Annotations;
 using SmartSql.Exceptions;
 using SmartSql.Reflection.TypeConstants;
+using SmartSql.TypeHandlers;
 using SmartSql.Utils;
 
 namespace SmartSql.DyRepository
@@ -24,11 +27,12 @@ namespace SmartSql.DyRepository
         private readonly Func<Type, MethodInfo, String> _sqlIdNamingConvert;
         private readonly ILogger _logger;
         private readonly StatementAnalyzer _statementAnalyzer;
+
         public EmitRepositoryBuilder(
-             string scopeTemplate
+            string scopeTemplate
             , Func<Type, MethodInfo, String> sqlIdNamingConvert
             , ILogger logger
-            )
+        )
         {
             _sqlIdNamingConvert = sqlIdNamingConvert;
             _logger = logger;
@@ -46,14 +50,16 @@ namespace SmartSql.DyRepository
             }, AssemblyBuilderAccess.Run);
             _moduleBuilder = _assemblyBuilder.DefineDynamicModule(assemblyName + ".dll");
         }
-        private void EmitBuildCtor(string scope, TypeBuilder typeBuilder, FieldBuilder sqlMapperField, FieldBuilder scopeField)
+
+        private void EmitBuildCtor(string scope, TypeBuilder typeBuilder, FieldBuilder sqlMapperField,
+            FieldBuilder scopeField)
         {
-            var paramTypes = new Type[] { ISqlMapperType.Type };
+            var paramTypes = new Type[] {ISqlMapperType.Type};
             var ctorBuilder = typeBuilder.DefineConstructor(
                 MethodAttributes.Public, CallingConventions.Standard, paramTypes);
             var ilGen = ctorBuilder.GetILGenerator();
             ilGen.LoadArg(0);
-            ilGen.Emit(OpCodes.Call, CommonType.Object.GetConstructor(Type.EmptyTypes));
+            ilGen.Call(CommonType.Object.GetConstructor(Type.EmptyTypes));
             ilGen.LoadArg(0);
             ilGen.LoadArg(1);
             ilGen.FieldSet(sqlMapperField);
@@ -62,32 +68,41 @@ namespace SmartSql.DyRepository
             ilGen.FieldSet(scopeField);
             ilGen.Return();
         }
+
         private void BuildInternalGet(TypeBuilder typeBuilder, MethodInfo methodInfo, FieldBuilder sqlMapperField)
         {
             var implMethod = typeBuilder.DefineMethod(methodInfo.Name
-            , MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final
-            , methodInfo.ReturnType, Type.EmptyTypes);
+                , MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot |
+                  MethodAttributes.Virtual | MethodAttributes.Final
+                , methodInfo.ReturnType, Type.EmptyTypes);
             var ilGen = implMethod.GetILGenerator();
             ilGen.LoadArg(0);
             ilGen.FieldGet(sqlMapperField);
             ilGen.Return();
         }
-        private void BuildMethod(Type interfaceType, TypeBuilder typeBuilder, MethodInfo methodInfo, FieldBuilder sqlMapperField, SmartSqlConfig smartSqlConfig, string scope)
+
+        private void BuildMethod(Type interfaceType, TypeBuilder typeBuilder, MethodInfo methodInfo,
+            FieldBuilder sqlMapperField, SmartSqlConfig smartSqlConfig, SqlMap sqlMap)
         {
+            var returnType = methodInfo.ReturnType;
+            var isTaskReturnType = CommonType.Task.IsAssignableFrom(returnType);
+            Statement statement = PreStatement(interfaceType, sqlMap, methodInfo, returnType, isTaskReturnType,
+                out var executeBehavior);
+
             var methodParams = methodInfo.GetParameters();
             var paramTypes = methodParams.Select(m => m.ParameterType).ToArray();
             if (paramTypes.Any(p => p.IsGenericParameter))
             {
-                _logger.LogError("SmartSql.DyRepository method parameters do not support generic parameters for the time being!");
-                throw new SmartSqlException("SmartSql.DyRepository method parameters do not support generic parameters for the time being!");
+                _logger.LogError(
+                    "SmartSql.DyRepository method parameters do not support generic parameters for the time being!");
+                throw new SmartSqlException(
+                    "SmartSql.DyRepository method parameters do not support generic parameters for the time being!");
             }
-            var returnType = methodInfo.ReturnType;
 
             var implMethod = typeBuilder.DefineMethod(methodInfo.Name
-                , MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final
+                , MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot |
+                  MethodAttributes.Virtual | MethodAttributes.Final
                 , returnType, paramTypes);
-
-            var isTaskReturnType = CommonType.Task.IsAssignableFrom(returnType);
 
             if (methodInfo.IsGenericMethod)
             {
@@ -102,7 +117,6 @@ namespace SmartSql.DyRepository
                 }
             }
 
-            StatementAttribute statementAttr = PreStatement(interfaceType, scope, methodInfo, returnType, isTaskReturnType, smartSqlConfig);
             var ilGen = implMethod.GetILGenerator();
             bool onlyOneParam = paramTypes.Length == 1;
             Type firstParamType = paramTypes.FirstOrDefault();
@@ -111,25 +125,20 @@ namespace SmartSql.DyRepository
 
             if (onlyOneParam && RequestContextType.AbstractType.IsAssignableFrom(firstParamType))
             {
-                throw new SmartSqlException($"DyRepository.Method ParameterType :{firstParamType.FullName} can not be RequestContext.");
+                throw new SmartSqlException(
+                    $"DyRepository.Method ParameterType :{firstParamType.FullName} can not be RequestContext.");
                 //ilGen.LoadArg(1);
                 //ilGen.StoreLocalVar(0);
             }
 
             bool isOnlyOneClassParam = onlyOneParam && !IsSimpleParam(firstParamType);
             EmitNewRequestContext(ilGen, isOnlyOneClassParam, firstParamType);
-            EmitSetCommandType(ilGen, statementAttr);
-            EmitSetDataSourceChoice(ilGen, statementAttr);
+            EmitStatementAttr(ilGen, methodInfo);
             EmitSetTransaction(ilGen, methodInfo);
-            if (String.IsNullOrEmpty(statementAttr.Sql))
-            {
-                EmitSetScope(ilGen, statementAttr.Scope);
-                EmitSetSqlId(ilGen, statementAttr);
-            }
-            else
-            {
-                EmitSetRealSql(ilGen, statementAttr);
-            }
+            EmitSetScope(ilGen, sqlMap.Scope);
+            EmitSetSqlId(ilGen, statement);
+            EmitSetCache(ilGen, methodInfo);
+
             if (isOnlyOneClassParam)
             {
                 ilGen.LoadLocalVar(0);
@@ -153,6 +162,7 @@ namespace SmartSql.DyRepository
                     {
                         reqParamName = paramAttr.Name;
                     }
+
                     ilGen.LoadLocalVar(1);
                     ilGen.LoadString(reqParamName);
                     ilGen.LoadArg(argIndex);
@@ -161,55 +171,97 @@ namespace SmartSql.DyRepository
                     {
                         ilGen.Box(reqParam.ParameterType);
                     }
+
                     ilGen.LoadType(reqParam.ParameterType);
                     ilGen.New(SqlParameterType.Ctor.SqlParameter);
+
+                    #region Ensure TypeHanlder
+
                     ilGen.Dup();
-                    var getHandlerMethod = paramAttr?.FieldType != null ? TypeHandlerCacheType.GetHandlerMethod(reqParam.ParameterType, paramAttr?.FieldType)
-                        : PropertyTypeHandlerCacheType.GetHandlerMethod(reqParam.ParameterType);
-                    ilGen.Call(getHandlerMethod);
+                    if (paramAttr != null && !String.IsNullOrEmpty(paramAttr.TypeHandler))
+                    {
+                        var typeHandlerField =
+                            NamedTypeHandlerCache.GetTypeHandlerField(smartSqlConfig.Alias, paramAttr.TypeHandler);
+                        if (typeHandlerField == null)
+                        {
+                            throw new SmartSqlException(
+                                $"Can not find NamedTypeHandler SmartSql.Alias:[{smartSqlConfig.Alias}],Name :[{paramAttr.TypeHandler}].");
+                        }
+
+                        ilGen.FieldGet(typeHandlerField);
+                    }
+                    else
+                    {
+                        var getHandlerMethod = PropertyTypeHandlerCacheType.GetHandlerMethod(reqParam.ParameterType);
+                        ilGen.Call(getHandlerMethod);
+                    }
+
                     ilGen.Call(SqlParameterType.Method.SetTypeHandler);
                     ilGen.Call(SqlParameterType.Method.Add);
+
+                    #endregion
                 }
+
                 ilGen.LoadLocalVar(0);
                 ilGen.LoadLocalVar(1);
                 ilGen.Callvirt(RequestContextType.Method.SetRequest);
             }
-            MethodInfo executeMethod = PreExecuteMethod(statementAttr, returnType, isTaskReturnType);
+
+            MethodInfo executeMethod = PreExecuteMethod(executeBehavior, returnType, isTaskReturnType);
             ilGen.LoadArg(0);
             ilGen.FieldGet(sqlMapperField);
             ilGen.LoadLocalVar(0);
-            ilGen.Call(executeMethod);
+            ilGen.Callvirt(executeMethod);
             if (returnType == CommonType.Void)
             {
                 ilGen.Pop();
             }
+
             ilGen.Return();
             if (_logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogDebug($"RepositoryBuilder.BuildMethod:{methodInfo.Name}->Statement:[Scope:{statementAttr.Scope},Id:{statementAttr.Id},Execute:{statementAttr.Execute},Sql:{statementAttr.Sql},IsAsync:{isTaskReturnType}]");
+                _logger.LogDebug(
+                    $"RepositoryBuilder.BuildMethod:{methodInfo.Name}->Statement:[Scope:{sqlMap.Scope},Id:{statement.Id},Execute:{executeBehavior},IsAsync:{isTaskReturnType}]");
             }
         }
+
         private bool IsSimpleParam(Type paramType)
         {
             if (paramType == typeof(CommandType))
             {
                 return false;
             }
+
             if (paramType == typeof(DataSourceChoice))
             {
                 return false;
             }
+
             if (SqlParameterType.SqlParameterCollection == paramType)
             {
                 return false;
             }
-            if (paramType.IsValueType) { return true; }
-            if (paramType == typeof(string)) { return true; }
-            if (paramType.IsGenericParameter) { return true; }
+
+            if (paramType.IsValueType)
+            {
+                return true;
+            }
+
+            if (paramType == typeof(string))
+            {
+                return true;
+            }
+
+            if (paramType.IsGenericParameter)
+            {
+                return true;
+            }
 
             return DataType.Enumerable.IsAssignableFrom(paramType);
         }
+
         #region Pre
+
         private string PreScope(Type interfaceType, string scope = "")
         {
             var sqlmapAttr = interfaceType.GetCustomAttribute<SqlMapAttribute>();
@@ -221,57 +273,95 @@ namespace SmartSql.DyRepository
             {
                 scope = _templateParser.Parse(interfaceType.Name);
             }
+
             return scope;
         }
-        private StatementAttribute PreStatement(Type interfaceType, string scope, MethodInfo methodInfo, Type returnType, bool isTaskReturnType, SmartSqlConfig smartSqlConfig)
-        {
-            returnType = isTaskReturnType ? returnType.GetGenericArguments().FirstOrDefault() : returnType;
-            var statementAttr = methodInfo.GetCustomAttribute<StatementAttribute>();
 
-            var methodName = _sqlIdNamingConvert == null ? methodInfo.Name : _sqlIdNamingConvert.Invoke(interfaceType, methodInfo);
+        private Statement PreStatement(Type interfaceType, SqlMap sqlMap, MethodInfo methodInfo,
+            Type returnType, bool isTaskReturnType, out ExecuteBehavior executeBehavior)
+        {
+            var statementAttr = methodInfo.GetCustomAttribute<StatementAttribute>();
+            var methodName = _sqlIdNamingConvert == null
+                ? methodInfo.Name
+                : _sqlIdNamingConvert.Invoke(interfaceType, methodInfo);
 
             if (isTaskReturnType && methodInfo.Name.EndsWith("Async") && _sqlIdNamingConvert == null)
             {
                 methodName = methodName.Substring(0, methodName.Length - 5);
             }
+
             if (statementAttr != null)
             {
                 statementAttr.Id = !String.IsNullOrEmpty(statementAttr.Id) ? statementAttr.Id : methodName;
-                statementAttr.Scope = !String.IsNullOrEmpty(statementAttr.Scope) ? statementAttr.Scope : scope;
             }
             else
             {
                 statementAttr = new StatementAttribute
                 {
-                    Scope = scope,
                     Id = methodName
                 };
             }
 
+            var fullSqlId = $"{sqlMap.Scope}.{statementAttr.Id}";
+            Statement statement;
+            if (String.IsNullOrEmpty(statementAttr.Sql))
+            {
+                statement = sqlMap.GetStatement(fullSqlId);
+            }
+            else
+            {
+                if (sqlMap.Statements.ContainsKey(fullSqlId))
+                {
+                    throw new SmartSqlException($"Statement.FullSqlId:[{fullSqlId}] already exists!");
+                }
+
+                var resultCacheAttr = methodInfo.GetCustomAttribute<ResultCacheAttribute>();
+                statement = new Statement
+                {
+                    SqlMap = sqlMap,
+                    Id = statementAttr.Id,
+                    StatementType = _statementAnalyzer.Analyse(statementAttr.Sql),
+                    SqlTags = new List<ITag>
+                    {
+                        new SqlText(statementAttr.Sql, sqlMap.SmartSqlConfig.Database.DbProvider.ParameterPrefix)
+                    },
+                    CommandType = statementAttr.CommandType,
+                    EnablePropertyChangedTrack = statementAttr.EnablePropertyChangedTrack,
+                    ReadDb = statementAttr.ReadDb
+                };
+                if (statementAttr.CommandTimeout > 0)
+                {
+                    statement.CommandTimeout = statementAttr.CommandTimeout;
+                }
+
+
+                if (statementAttr.SourceChoice != DataSourceChoice.Unknow)
+                {
+                    statement.SourceChoice = statementAttr.SourceChoice;
+                }
+
+                if (resultCacheAttr != null)
+                {
+                    statement.CacheId = ParseCacheFullId(sqlMap.Scope, resultCacheAttr.CacheId);
+                    statement.Cache = sqlMap.GetCache(statement.CacheId);
+                }
+
+                sqlMap.Statements.Add(statement.FullSqlId, statement);
+            }
+
+            returnType = isTaskReturnType ? returnType.GetGenericArguments().FirstOrDefault() : returnType;
             if (returnType == typeof(DataTable))
             {
                 statementAttr.Execute = ExecuteBehavior.GetDataTable;
-                return statementAttr;
             }
+
             if (returnType == typeof(DataSet))
             {
                 statementAttr.Execute = ExecuteBehavior.GetDataSet;
-                return statementAttr;
             }
 
             if (statementAttr.Execute == ExecuteBehavior.Auto)
             {
-                Configuration.StatementType statementType = Configuration.StatementType.Unknown;
-                if (String.IsNullOrEmpty(statementAttr.Sql))
-                {
-                    var sqlStatement = smartSqlConfig.GetSqlMap(statementAttr.Scope).GetStatement($"{statementAttr.Scope}.{statementAttr.Id}");
-                    statementType = sqlStatement.StatementType;
-                }
-                else
-                {
-                    statementType = _statementAnalyzer.Analyse(statementAttr.Sql);
-                }
-
                 if (CommonType.IsValueTuple(returnType))
                 {
                     statementAttr.Execute = ExecuteBehavior.QuerySingle;
@@ -281,7 +371,7 @@ namespace SmartSql.DyRepository
                     statementAttr.Execute = ExecuteBehavior.Execute;
                     if (returnType == CommonType.Int32)
                     {
-                        if (statementType.HasFlag(Configuration.StatementType.Select))
+                        if (statement.StatementType.HasFlag(Configuration.StatementType.Select))
                         {
                             statementAttr.Execute = ExecuteBehavior.ExecuteScalar;
                         }
@@ -290,7 +380,7 @@ namespace SmartSql.DyRepository
                 else if (returnType.IsValueType || returnType == CommonType.String)
                 {
                     statementAttr.Execute = ExecuteBehavior.ExecuteScalar;
-                    if (!statementType.HasFlag(Configuration.StatementType.Select))
+                    if (!statement.StatementType.HasFlag(Configuration.StatementType.Select))
                     {
                         statementAttr.Execute = ExecuteBehavior.Execute;
                     }
@@ -301,96 +391,119 @@ namespace SmartSql.DyRepository
                     statementAttr.Execute = isQueryEnumerable ? ExecuteBehavior.Query : ExecuteBehavior.QuerySingle;
                 }
             }
-            return statementAttr;
+
+            executeBehavior = statementAttr.Execute;
+            return statement;
         }
 
-        private MethodInfo PreExecuteMethod(StatementAttribute statementAttr, Type returnType, bool isTaskReturnType)
+        private MethodInfo PreExecuteMethod(ExecuteBehavior executeBehavior, Type returnType, bool isTaskReturnType)
         {
             MethodInfo executeMethod;
             if (isTaskReturnType)
             {
                 var realReturnType = returnType.GenericTypeArguments.FirstOrDefault();
-                switch (statementAttr.Execute)
+                switch (executeBehavior)
                 {
                     case ExecuteBehavior.Execute:
-                        {
-                            executeMethod = ISqlMapperType.Method.ExecuteAsync;
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.ExecuteAsync;
+                        break;
+                    }
+
                     case ExecuteBehavior.ExecuteScalar:
-                        {
-                            executeMethod = ISqlMapperType.Method.ExecuteScalarAsync.MakeGenericMethod(realReturnType);
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.ExecuteScalarAsync.MakeGenericMethod(realReturnType);
+                        break;
+                    }
+
                     case ExecuteBehavior.QuerySingle:
-                        {
-                            executeMethod = ISqlMapperType.Method.QuerySingleAsync.MakeGenericMethod(realReturnType);
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.QuerySingleAsync.MakeGenericMethod(realReturnType);
+                        break;
+                    }
+
                     case ExecuteBehavior.Query:
-                        {
-                            var method = ISqlMapperType.Method.QueryAsync;
-                            var enumerableType = realReturnType.GenericTypeArguments[0];
-                            executeMethod = method.MakeGenericMethod(enumerableType);
-                            break;
-                        }
+                    {
+                        var method = ISqlMapperType.Method.QueryAsync;
+                        var enumerableType = realReturnType.GenericTypeArguments[0];
+                        executeMethod = method.MakeGenericMethod(enumerableType);
+                        break;
+                    }
+
                     case ExecuteBehavior.GetDataTable:
-                        {
-                            executeMethod = ISqlMapperType.Method.GetDataTableAsync;
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.GetDataTableAsync;
+                        break;
+                    }
+
                     case ExecuteBehavior.GetDataSet:
-                        {
-                            executeMethod = ISqlMapperType.Method.GetDataSetAsync;
-                            break;
-                        }
-                    default: { throw new ArgumentException(); }
+                    {
+                        executeMethod = ISqlMapperType.Method.GetDataSetAsync;
+                        break;
+                    }
+
+                    default:
+                    {
+                        throw new ArgumentException();
+                    }
                 }
             }
             else
             {
-                switch (statementAttr.Execute)
+                switch (executeBehavior)
                 {
                     case ExecuteBehavior.Execute:
-                        {
-                            executeMethod = ISqlMapperType.Method.Execute;
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.Execute;
+                        break;
+                    }
+
                     case ExecuteBehavior.ExecuteScalar:
-                        {
-                            executeMethod = ISqlMapperType.Method.ExecuteScalar.MakeGenericMethod(returnType);
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.ExecuteScalar.MakeGenericMethod(returnType);
+                        break;
+                    }
+
                     case ExecuteBehavior.QuerySingle:
-                        {
-                            executeMethod = ISqlMapperType.Method.QuerySingle.MakeGenericMethod(returnType);
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.QuerySingle.MakeGenericMethod(returnType);
+                        break;
+                    }
+
                     case ExecuteBehavior.Query:
-                        {
-                            var method = ISqlMapperType.Method.Query;
-                            var enumerableType = returnType.GenericTypeArguments[0];
-                            executeMethod = method.MakeGenericMethod(new Type[] { enumerableType });
-                            break;
-                        }
+                    {
+                        var method = ISqlMapperType.Method.Query;
+                        var enumerableType = returnType.GenericTypeArguments[0];
+                        executeMethod = method.MakeGenericMethod(new Type[] {enumerableType});
+                        break;
+                    }
+
                     case ExecuteBehavior.GetDataTable:
-                        {
-                            executeMethod = ISqlMapperType.Method.GetDataTable;
-                            break;
-                        }
+                    {
+                        executeMethod = ISqlMapperType.Method.GetDataTable;
+                        break;
+                    }
+
                     case ExecuteBehavior.GetDataSet:
-                        {
-                            executeMethod = ISqlMapperType.Method.GetDataSet;
-                            break;
-                        }
-                    default: { throw new ArgumentException(); }
+                    {
+                        executeMethod = ISqlMapperType.Method.GetDataSet;
+                        break;
+                    }
+
+                    default:
+                    {
+                        throw new ArgumentException();
+                    }
                 }
             }
 
             return executeMethod;
         }
+
         #endregion
+
         #region Emit Set RequestContext
+
         private void EmitNewRequestContext(ILGenerator ilGen, bool isOnlyOneClassParam, Type onlyOneParamType)
         {
             var requestCtor = RequestContextType.Ctor;
@@ -398,66 +511,202 @@ namespace SmartSql.DyRepository
             {
                 requestCtor = RequestContextType.MakeGenericTypeCtor(onlyOneParamType);
             }
+
             ilGen.New(requestCtor);
             ilGen.StoreLocalVar(0);
         }
+
         private void EmitSetScope(ILGenerator ilGen, string scope)
         {
             ilGen.LoadLocalVar(0);
             ilGen.LoadString(scope);
             ilGen.Callvirt(RequestContextType.Method.SetScope);
         }
-        private static void EmitSetCommandType(ILGenerator ilGen, StatementAttribute statementAttr)
+
+        private void EmitSetTransaction(ILGenerator ilGen, MethodInfo methodInfo)
         {
-            if (statementAttr.CommandType != CommandType.Text)
+            IsolationLevel? isolationLevel = null;
+            foreach (var attributeData in methodInfo.GetCustomAttributesData())
             {
-                ilGen.LoadLocalVar(0);
-                ilGen.LoadInt32(statementAttr.CommandType.GetHashCode());
-                ilGen.Callvirt(RequestContextType.Method.SetCommandType);
+                var attrType = attributeData.AttributeType;
+                if (attrType == typeof(UseTransactionAttribute))
+                {
+                    var transactionAttribute = methodInfo.GetCustomAttribute<UseTransactionAttribute>();
+                    isolationLevel = transactionAttribute.Level;
+                    break;
+                }
+
+                #region  Warning:: SmartSql.AOP.TransactionAttribute , Suggested use UseTransactionAttribute
+
+                if (attrType.FullName == "SmartSql.AOP.TransactionAttribute")
+                {
+                    _logger.LogWarning(
+                        $"RepositoryBuilder.BuildMethod:{methodInfo.Name} Used:[{attrType.FullName}] ,Suggested use:[{typeof(UseTransactionAttribute).FullName}] For DyRepository interface.");
+                    var transactionAttribute = methodInfo.GetCustomAttribute(attrType);
+                    var transactionLevel = attrType.GetProperty("Level")?.GetValue(transactionAttribute);
+                    if (transactionLevel != null)
+                    {
+                        isolationLevel = (IsolationLevel) transactionLevel;
+                    }
+
+                    break;
+                }
+
+                #endregion
             }
-        }
-        private static void EmitSetDataSourceChoice(ILGenerator ilGen, StatementAttribute statementAttr)
-        {
-            if (statementAttr.SourceChoice != DataSourceChoice.Unknow)
+
+            if (isolationLevel.HasValue)
             {
                 ilGen.LoadLocalVar(0);
-                ilGen.LoadInt32(statementAttr.SourceChoice.GetHashCode());
-                ilGen.Callvirt(RequestContextType.Method.SetDataSourceChoice);
-            }
-        }
-        private static void EmitSetTransaction(ILGenerator ilGen, MethodInfo methodInfo)
-        {
-            var useTransactionAttribute = methodInfo.GetCustomAttribute<UseTransactionAttribute>();
-            if (useTransactionAttribute != null)
-            {
-                ilGen.LoadLocalVar(0);
-                ilGen.LoadInt32(useTransactionAttribute.Level.GetHashCode());
+                ilGen.LoadInt32(isolationLevel.GetHashCode());
                 ilGen.New(NullableType<IsolationLevel>.Ctor);
                 ilGen.Callvirt(RequestContextType.Method.SetTransaction);
             }
         }
-        private void EmitSetRealSql(ILGenerator ilGen, StatementAttribute statementAttr)
+
+        private static void EmitStatementAttr(ILGenerator ilGen, MethodInfo methodInfo)
         {
-            ilGen.LoadLocalVar(0);
-            ilGen.LoadString(statementAttr.Sql);
-            ilGen.Callvirt(RequestContextType.Method.SetRealSql);
+            var statementAttribute = methodInfo.GetCustomAttribute<StatementAttribute>();
+            if (statementAttribute == null || !String.IsNullOrEmpty(statementAttribute.Sql)) return;
+
+            if (statementAttribute.SourceChoice != DataSourceChoice.Unknow)
+            {
+                ilGen.LoadLocalVar(0);
+                ilGen.LoadInt32(statementAttribute.SourceChoice.GetHashCode());
+                ilGen.Callvirt(RequestContextType.Method.SetDataSourceChoice);
+            }
+
+            if (statementAttribute.CommandTimeout > 0)
+            {
+                ilGen.LoadLocalVar(0);
+                ilGen.LoadInt32(statementAttribute.CommandTimeout);
+                ilGen.Callvirt(RequestContextType.Method.SetCommandTimeout);
+            }
+
+            if (!String.IsNullOrEmpty(statementAttribute.ReadDb))
+            {
+                ilGen.LoadLocalVar(0);
+                ilGen.LoadString(statementAttribute.ReadDb);
+                ilGen.Callvirt(RequestContextType.Method.SetReadDb);
+            }
+
+            if (statementAttribute.EnablePropertyChangedTrack)
+            {
+                ilGen.LoadLocalVar(0);
+                ilGen.LoadInt32(1);
+                ilGen.Callvirt(RequestContextType.Method.SetEnablePropertyChangedTrack);
+            }
         }
-        private void EmitSetSqlId(ILGenerator ilGen, StatementAttribute statementAttr)
+
+        private static void EmitSetCache(ILGenerator ilGen, MethodInfo methodInfo)
+        {
+            var resultCacheAttr = methodInfo.GetCustomAttribute<ResultCacheAttribute>();
+            if (resultCacheAttr != null)
+            {
+                if (!String.IsNullOrEmpty(resultCacheAttr.Key))
+                {
+                    ilGen.LoadLocalVar(0);
+                    ilGen.LoadString(resultCacheAttr.Key);
+                    ilGen.Callvirt(RequestContextType.Method.SetCacheKeyTemplate);
+                }
+            }
+        }
+
+        private void EmitSetSqlId(ILGenerator ilGen, Statement statement)
         {
             ilGen.LoadLocalVar(0);
-            ilGen.LoadString(statementAttr.Id);
+            ilGen.LoadString(statement.Id);
             ilGen.Callvirt(RequestContextType.Method.SetSqlId);
         }
 
         #endregion
+
+        #region GetOrAddSqlMap
+
+        private SqlMap GetOrAddSqlMap(SmartSqlConfig smartSqlConfig, Type interfaceType, string scope)
+        {
+            if (!smartSqlConfig.SqlMaps.TryGetValue(scope, out var sqlMap))
+            {
+                sqlMap = new SqlMap
+                {
+                    Path = interfaceType.AssemblyQualifiedName,
+                    Scope = scope,
+                    SmartSqlConfig = smartSqlConfig,
+                    Statements = new Dictionary<string, Statement>(),
+                    Caches = new Dictionary<string, Configuration.Cache>(),
+                    MultipleResultMaps = new Dictionary<string, MultipleResultMap>(),
+                    ParameterMaps = new Dictionary<string, ParameterMap>(),
+                    ResultMaps = new Dictionary<string, ResultMap>()
+                };
+                smartSqlConfig.SqlMaps.Add(scope, sqlMap);
+            }
+
+            BuildCache(sqlMap, interfaceType);
+
+            return sqlMap;
+        }
+
+        private void BuildCache(SqlMap sqlMap, Type interfaceType)
+        {
+            var cacheAttrs = interfaceType.GetCustomAttributes<CacheAttribute>();
+            foreach (var cacheAttribute in cacheAttrs)
+            {
+                Configuration.Cache cache = new Configuration.Cache
+                {
+                    FlushInterval = new FlushInterval(), Id = ParseCacheFullId(sqlMap.Scope, cacheAttribute.Id)
+                };
+                if (sqlMap.Caches.ContainsKey(cache.Id))
+                {
+                    throw new SmartSqlException($"Cache.FullId:[{cache.Id}] already exists!");
+                }
+
+                if (cacheAttribute.FlushInterval > 0)
+                {
+                    cache.FlushInterval.Seconds = cacheAttribute.FlushInterval;
+                }
+
+                if (cacheAttribute.FlushOnExecutes != null && cacheAttribute.FlushOnExecutes.Length > 0)
+                {
+                    cache.FlushOnExecutes = cacheAttribute.FlushOnExecutes.Select(m => new FlushOnExecute
+                    {
+                        Statement = m.IndexOf('.') > 0 ? m : $"{sqlMap.Scope}.{m}"
+                    }).ToList();
+                }
+
+                cache.Parameters = new Dictionary<string, object>
+                {
+                    {nameof(CacheAttribute.CacheSize), cacheAttribute.CacheSize}
+                };
+                cache.Type = cacheAttribute.Type;
+                cache.Provider = CacheProviderUtil.Create(cache);
+                sqlMap.Caches.Add(cache.Id, cache);
+            }
+        }
+
+        private static String ParseCacheFullId(String scope, String cacheId)
+        {
+            if (cacheId.IndexOf('.') < 0)
+            {
+                return $"{scope}.{cacheId}";
+            }
+            else
+            {
+                return cacheId;
+            }
+        }
+
+        #endregion
+
         public Type Build(Type interfaceType, SmartSqlConfig smartSqlConfig, string scope = "")
         {
             string implName = $"{interfaceType.Name.TrimStart('I')}_Impl_{Guid.NewGuid():N}";
             var typeBuilder = _moduleBuilder.DefineType(implName, TypeAttributes.Public);
             typeBuilder.AddInterfaceImplementation(interfaceType);
+            typeBuilder.AddInterfaceImplementation(typeof(IRepositoryProxy));
             var sqlMapperField = typeBuilder.DefineField("sqlMapper", ISqlMapperType.Type, FieldAttributes.Family);
             var scopeField = typeBuilder.DefineField("scope", CommonType.String, FieldAttributes.Family);
             scope = PreScope(interfaceType, scope);
+            var sqlMap = GetOrAddSqlMap(smartSqlConfig, interfaceType, scope);
             EmitBuildCtor(scope, typeBuilder, sqlMapperField, scopeField);
             var interfaceMethods = new List<MethodInfo>();
 
@@ -469,6 +718,7 @@ namespace SmartSql.DyRepository
                 var currentIIMethods = currentII.GetMethods(BindingFlags.Instance | BindingFlags.Public);
                 interfaceMethods.AddRange(currentIIMethods);
             }
+
             foreach (var methodInfo in interfaceMethods)
             {
                 if (methodInfo.ReturnType == ISqlMapperType.Type)
@@ -477,9 +727,18 @@ namespace SmartSql.DyRepository
                 }
                 else
                 {
-                    BuildMethod(interfaceType, typeBuilder, methodInfo, sqlMapperField, smartSqlConfig, scope);
+                    BuildMethod(interfaceType, typeBuilder, methodInfo, sqlMapperField, smartSqlConfig, sqlMap);
                 }
             }
+
+            if (sqlMap.Path == interfaceType.AssemblyQualifiedName)
+            {
+                if (sqlMap.Caches?.Count > 0)
+                {
+                    smartSqlConfig.CacheManager.Reset();
+                }
+            }
+
             return typeBuilder.CreateTypeInfo();
         }
     }

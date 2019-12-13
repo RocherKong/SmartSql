@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using SmartSql.Sample.AspNetCore.DyRepositories;
@@ -18,20 +17,23 @@ namespace SmartSql.Sample.AspNetCore.Controllers
         private readonly UserService _userService;
 
         public UserController(IUserRepository userRepository
-        ,UserService userService)
+            , UserService userService)
         {
+            
             _userRepository = userRepository;
             _userService = userService;
         }
+
         // GET api/values
         [HttpPost]
-        public long AddWithTranWrap([FromBody]User user)
+        public long AddWithTranWrap([FromBody] User user)
         {
             var id = _userService.AddWithTranWrap(user);
             return id;
         }
+
         [HttpPost]
-        public long AddWithTran([FromBody]User user)
+        public long AddWithTran([FromBody] User user)
         {
             var id = _userService.AddWithTran(user);
             return id;
@@ -45,26 +47,41 @@ namespace SmartSql.Sample.AspNetCore.Controllers
             var userJson = Newtonsoft.Json.JsonConvert.SerializeObject(user);
             return user;
         }
+        [HttpPost]
+        public int UpdateTrack(long id)
+        {
+            var user = _userRepository.GetById(id);
+            user.UserName = "Updated";
+            return _userRepository.Update(user);
+        }
+        [HttpPost]
+        public int Update(User user)
+        {
+            return _userRepository.Update(user);
+        }
 
         [HttpGet]
-        public GetByPageResponse<User> GetByPage(int pageIndex = 1)
+        public async Task<GetByPageResponse<User>> GetByPage(int pageIndex = 1)
         {
-            return _userRepository.GetByPage<GetByPageResponse<User>>(new
+            return await _userRepository.GetByPage<GetByPageResponse<User>>(new
             {
                 PageSize = 10,
                 PageIndex = pageIndex
             });
         }
+
         [HttpGet]
         public IEnumerable<User> Query(int taken = 10)
         {
             return _userRepository.Query(taken);
         }
+
         [HttpGet]
         public async Task<IEnumerable<User>> QueryAsync(int taken = 10)
         {
             return await _userRepository.QueryAsync(taken);
         }
+
         [HttpGet]
         public async Task Mt(int id)
         {
@@ -86,7 +103,6 @@ namespace SmartSql.Sample.AspNetCore.Controllers
                 _userRepository.SqlMapper.RollbackTransaction();
                 throw;
             }
-            
         }
     }
 }

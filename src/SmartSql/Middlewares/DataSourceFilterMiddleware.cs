@@ -4,29 +4,31 @@ using System.Threading.Tasks;
 
 namespace SmartSql.Middlewares
 {
-    public class DataSourceFilterMiddleware : IMiddleware
+    public class DataSourceFilterMiddleware : AbstractMiddleware
     {
-        private readonly IDataSourceFilter _dataSourceFilter;
-        public IMiddleware Next { get; set; }
-        public DataSourceFilterMiddleware(SmartSqlConfig smartSqlConfig)
-        {
-            _dataSourceFilter = smartSqlConfig.DataSourceFilter;
-        }
-        public void Invoke<TResult>(ExecutionContext executionContext)
+        private  IDataSourceFilter _dataSourceFilter;
+        public override void Invoke<TResult>(ExecutionContext executionContext)
         {
             SetDataSource(executionContext);
-            Next.Invoke<TResult>(executionContext);
+            InvokeNext<TResult>(executionContext);
         }
-        public async Task InvokeAsync<TResult>(ExecutionContext executionContext)
+        public override async Task InvokeAsync<TResult>(ExecutionContext executionContext)
         {
             SetDataSource(executionContext);
-            await Next.InvokeAsync<TResult>(executionContext);
+            await InvokeNextAsync<TResult>(executionContext);
         }
+        
         private void SetDataSource(ExecutionContext executionContext)
         {
             if (executionContext.DbSession.DataSource != null) { return; }
             var dataSource = _dataSourceFilter.Elect(executionContext.Request);
             executionContext.DbSession.SetDataSource(dataSource);
         }
+        public override void SetupSmartSql(SmartSqlBuilder smartSqlBuilder)
+        {
+            _dataSourceFilter = smartSqlBuilder.SmartSqlConfig.DataSourceFilter;
+        }
+
+        public override int Order => 400;
     }
 }

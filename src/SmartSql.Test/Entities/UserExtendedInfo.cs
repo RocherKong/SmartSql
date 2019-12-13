@@ -5,10 +5,12 @@ using SmartSql.Annotations;
 
 namespace SmartSql.Test.Entities
 {
+    [Table("T_UserExtendedInfo")]
     public class UserExtendedInfo
     {
-        public long UserId { get; set; }
-        [Column(FieldType = typeof(String))]
-        public UserInfo Data { get; set; }
+        public virtual long UserId { get; set; }
+
+        [Column(FieldType = typeof(String),Alias = "GlobalSmartSql",TypeHandler = "Json")]
+        public virtual UserInfo Data { get; set; }
     }
 }

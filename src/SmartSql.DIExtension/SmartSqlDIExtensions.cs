@@ -1,26 +1,28 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SmartSql;
 using SmartSql.Configuration;
 using SmartSql.DbSession;
 using SmartSql.DIExtension;
+using SmartSql.Utils;
 
 namespace Microsoft.Extensions.DependencyInjection
 {
     public static class SmartSqlDIExtensions
     {
-        public static SmartSqlDIBuilder AddSmartSql(this IServiceCollection services, Func<IServiceProvider, SmartSqlBuilder> setup)
+        public static SmartSqlDIBuilder AddSmartSql(this IServiceCollection services,
+            Func<IServiceProvider, SmartSqlBuilder> setup)
         {
             services.AddSingleton<SmartSqlBuilder>(sp => setup(sp).Build());
             AddOthers(services);
             return new SmartSqlDIBuilder(services);
         }
 
-        public static SmartSqlDIBuilder AddSmartSql(this IServiceCollection services, Action<IServiceProvider, SmartSqlBuilder> setup)
+        public static SmartSqlDIBuilder AddSmartSql(this IServiceCollection services,
+            Action<IServiceProvider, SmartSqlBuilder> setup)
         {
             return services.AddSmartSql(sp =>
             {
@@ -32,33 +34,37 @@ namespace Microsoft.Extensions.DependencyInjection
                     var configPath = ResolveConfigPath(sp);
                     smartSqlBuilder.UseXmlConfig(SmartSql.ConfigBuilder.ResourceType.File, configPath);
                 }
+
                 return smartSqlBuilder;
             });
         }
 
-        public static SmartSqlDIBuilder AddSmartSql(this IServiceCollection services, String alias = SmartSqlBuilder.DEFAULT_ALIAS)
+        public static SmartSqlDIBuilder AddSmartSql(this IServiceCollection services,
+            String alias = SmartSqlBuilder.DEFAULT_ALIAS)
         {
-            return services.AddSmartSql((sp, builder) =>
-            {
-                builder.UseAlias(alias);
-            });
+            return services.AddSmartSql((sp, builder) => { builder.UseAlias(alias); });
         }
+
         public static SmartSqlDIBuilder AddSmartSql(this IServiceCollection services, Action<SmartSqlBuilder> setup)
         {
             return services.AddSmartSql((sp, builder) => { setup(builder); });
         }
+
         private static string ResolveConfigPath(IServiceProvider sp)
         {
-            var env = sp.GetService<IHostingEnvironment>();
+            var envStr = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
             var configPath = SmartSqlBuilder.DEFAULT_SMARTSQL_CONFIG_PATH;
-            if (env != null && !env.IsProduction())
+            if (!String.IsNullOrEmpty(envStr) &&
+                !string.Equals(envStr, "Production", StringComparison.OrdinalIgnoreCase))
             {
-                configPath = $"SmartSqlMapConfig.{env.EnvironmentName}.xml";
+                configPath = $"SmartSqlMapConfig.{envStr}.xml";
             }
-            if (!File.Exists(configPath))
+
+            if (!ResourceUtil.FileExists(configPath))
             {
                 configPath = SmartSqlBuilder.DEFAULT_SMARTSQL_CONFIG_PATH;
             }
+
             return configPath;
         }
 
@@ -67,7 +73,8 @@ namespace Microsoft.Extensions.DependencyInjection
             services.AddSingleton<IDbSessionFactory>(sp => sp.GetRequiredService<SmartSqlBuilder>().DbSessionFactory);
             services.AddSingleton<ISqlMapper>(sp => sp.GetRequiredService<SmartSqlBuilder>().SqlMapper);
             services.AddSingleton<ITransaction>(sp => sp.GetRequiredService<SmartSqlBuilder>().SqlMapper);
-            services.AddSingleton<IDbSessionStore>(sp => sp.GetRequiredService<SmartSqlBuilder>().SmartSqlConfig.SessionStore);
+            services.AddSingleton<IDbSessionStore>(sp =>
+                sp.GetRequiredService<SmartSqlBuilder>().SmartSqlConfig.SessionStore);
         }
     }
 }

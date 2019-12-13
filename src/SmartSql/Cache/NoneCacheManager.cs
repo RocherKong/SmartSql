@@ -7,24 +7,30 @@ namespace SmartSql.Cache
 {
     public class NoneCacheManager : ICacheManager
     {
-        public void BindSessionEventHandler(IDbSession dbSession)
-        {
-
-        }
-
+        
         public void Dispose()
         {
             
         }
 
-        public void ExecuteRequest(ExecutionContext executionContext)
+        public void ListenInvokeSucceeded()
         {
-           
+            
         }
 
-        public bool TryGetValue(ExecutionContext executionContext, out object cacheItem)
+        public void Reset()
+        {
+            
+        }
+
+        public bool TryGetCache(ExecutionContext executionContext, out object cacheItem)
         {
             cacheItem = null;
+            return false;
+        }
+
+        public bool TryAddCache(ExecutionContext executionContext)
+        {
             return false;
         }
     }

@@ -8,8 +8,8 @@ namespace SmartSql.Cache
 {
     public interface ICacheManager : IDisposable
     {
-        bool TryGetValue(ExecutionContext executionContext, out object cacheItem);
-        void ExecuteRequest(ExecutionContext executionContext);
-        void BindSessionEventHandler(IDbSession dbSession);
+        void Reset();
+        bool TryGetCache(ExecutionContext executionContext, out object cacheItem);
+        bool TryAddCache(ExecutionContext executionContext);
     }
 }

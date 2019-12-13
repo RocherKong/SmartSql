@@ -1,0 +1,32 @@
+Name: OrderSyncTask
+Subscriber:
+  Type: RabbitMQ
+  Parameters:
+    HostName: localhost
+    UserName: guest
+    Password: guest
+    Exchange: smartsql
+    RoutingKey: smartsql.sync
+    QueueName: smartsql.sync.order
+
+DataSource:
+  Type: RDB
+  Parameters:
+    DbProvider: SqlServer
+    ConnectionString: Data Source=.;Initial Catalog=SmartSqlTestDB;Integrated Security=True
+Jobs:
+  Order:
+    Source:
+      Scope: User
+      SqlIds: ['Insert']
+      PrimaryKey:
+        Name: Id
+        IsAutoIncrement: true
+    Dest:
+      # 初始化表结构脚本
+      Schema: ''
+      TableName: 'T_User'
+      # 列名映射
+      ColumnMapping:
+        Id: {Name: id,IsPrimaryKey: true,IsAutoIncrement: true}
+        CreateTime: {Name: create_time}

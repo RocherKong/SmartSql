@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Text;
 using System.Threading.Tasks;
 using SmartSql.CUD;
 
@@ -11,7 +10,6 @@ namespace SmartSql.Bulk
     {
         /// <summary>
         /// List To DataTable
-        /// 待优化 -> IL
         /// </summary>
         /// <typeparam name="TEntity"></typeparam>
         /// <param name="list"></param>
@@ -22,19 +20,38 @@ namespace SmartSql.Bulk
             var dataTable = new DataTable(tableName);
             foreach (var columnIndex in EntityMetaDataCache<TEntity>.IndexColumnMaps)
             {
-                DataColumn dataColumn=new DataColumn(columnIndex.Value.Name, columnIndex.Value.FieldType);
+                if (columnIndex.Value.GetPropertyValue == null)
+                {
+                    continue;
+                }
+
+                DataColumn dataColumn = new DataColumn(columnIndex.Value.Name, columnIndex.Value.FieldType);
                 dataTable.Columns.Add(dataColumn);
             }
+
             foreach (var entity in list)
             {
                 var dataRow = dataTable.NewRow();
                 foreach (var columnIndex in EntityMetaDataCache<TEntity>.IndexColumnMaps)
                 {
-                    var propertyVal = columnIndex.Value.Property.GetValue(entity, null);
-                    dataRow[columnIndex.Key] = propertyVal ?? DBNull.Value;
+                    if (columnIndex.Value.GetPropertyValue == null)
+                    {
+                        continue;
+                    }
+                    var propertyVal = columnIndex.Value.GetPropertyValue(entity);
+                    if (columnIndex.Value.Handler != null)
+                    {
+                        dataRow[columnIndex.Key] = columnIndex.Value.Handler.GetSetParameterValue(propertyVal);
+                    }
+                    else
+                    {
+                        dataRow[columnIndex.Key] = propertyVal ?? DBNull.Value;
+                    }
                 }
+
                 dataTable.Rows.Add(dataRow);
             }
+
             return dataTable;
         }
 
@@ -44,6 +61,7 @@ namespace SmartSql.Bulk
             bulkInsert.Table = dataTable;
             bulkInsert.Insert();
         }
+
         public static async Task InsertAsync<TEntity>(this IBulkInsert bulkInsert, IEnumerable<TEntity> list)
         {
             var dataTable = list.ToDataTable();
@@ -52,4 +70,3 @@ namespace SmartSql.Bulk
         }
     }
 }
-

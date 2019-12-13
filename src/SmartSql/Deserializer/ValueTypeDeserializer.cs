@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using SmartSql.Reflection.TypeConstants;
 using SmartSql.TypeHandlers;
 
 namespace SmartSql.Deserializer
@@ -8,7 +9,12 @@ namespace SmartSql.Deserializer
     public class ValueTypeDeserializer : IDataReaderDeserializer
     {
         public const int VALUE_ORDINAL = 0;
-        public TResult ToSinge<TResult>(ExecutionContext executionContext)
+        public bool CanDeserialize(ExecutionContext executionContext, Type resultType, bool isMultiple = false)
+        {
+            return resultType.IsValueType || resultType == CommonType.String;
+        }
+
+        public TResult ToSingle<TResult>(ExecutionContext executionContext)
         {
             var dataReader = executionContext.DataReaderWrapper;
             if (!dataReader.HasRows) return default(TResult);
@@ -30,7 +36,7 @@ namespace SmartSql.Deserializer
             return list;
         }
 
-        public async Task<TResult> ToSingeAsync<TResult>(ExecutionContext executionContext)
+        public async Task<TResult> ToSingleAsync<TResult>(ExecutionContext executionContext)
         {
             var dataReader = executionContext.DataReaderWrapper;
             if (!dataReader.HasRows) return default(TResult);

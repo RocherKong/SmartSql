@@ -1,16 +1,53 @@
 ﻿<?xml version="1.0" encoding="utf-8" ?>
 <SmartSqlMapConfig xmlns="http://SmartSql.net/schemas/SmartSqlMapConfig.xsd">
-  <Settings IgnoreParameterCase="false" ParameterPrefix="$" IsCacheEnabled="true"/>
+  <Settings IgnoreParameterCase="false" ParameterPrefix="$"  IsCacheEnabled="true" EnablePropertyChangedTrack="true" IgnoreDbNull="true"/>
   <Properties>
-    <Property Name="Redis" Value="192.168.1.125"/>
-    <Property Name="ConnectionString" Value="Data Source=192.168.0.22;database=SmartSqlStartDB;uid=sa;pwd=MydaoSql!@#51"/>
+<!--    <Property Name="Redis" Value="localhost"/>-->
+    <Property Name="DbProvider" Value="SqlServer"/>
+    <Property Name="ConnectionString" Value="Data Source=.;Initial Catalog=SmartSqlTestDB;Integrated Security=True"/>
     <Property Name="JsonTypeHandler`" Value="SmartSql.TypeHandler.JsonTypeHandler`1,SmartSql.TypeHandler"/>
     <Property Name="JsonTypeHandler" Value="SmartSql.TypeHandler.JsonTypeHandler,SmartSql.TypeHandler"/>
     <Property Name="ScriptBuilder" Value="SmartSql.ScriptTag.ScriptBuilder,SmartSql.ScriptTag"/>
     <Property Name="RedisCacheProvider" Value="SmartSql.Cache.Redis.RedisCacheProvider,SmartSql.Cache.Redis"/>
   </Properties>
+  <AutoConverters>
+    <AutoConverter Name="NoneConverter">
+      <Tokenizer Name="None"/>
+      <Converter Name="None"/>
+    </AutoConverter>
+    <AutoConverter Name="Default" Default="true">
+      <Tokenizer Name="Default"/>
+      <Converter Name="Pascal"/>      
+    </AutoConverter>
+    <AutoConverter Name="PascalConverter">
+      <Tokenizer Name="Default">
+        <Properties>
+          <Property Name="IgnorePrefix" Value="" />
+          <Property Name="Delimiter" Value="_" />
+          <Property Name="UppercaseSplit" Value="false" />
+        </Properties>
+      </Tokenizer>
+      <Converter Name="Pascal"/>
+    </AutoConverter>
+    <AutoConverter Name="DelimiterConverter">
+      <Tokenizer Name="Default">
+        <Properties>
+          <Property Name="IgnorePrefix" Value="col_" />
+          <Property Name="Delimiter" Value="_" />
+          <Property Name="UppercaseSplit" Value="true" />
+        </Properties>
+      </Tokenizer>
+      <Converter Name="Delimiter">
+        <Properties>
+          <Property Name="Prefix" Value="Col_" />
+          <Property Name="Delimiter" Value="_"/>
+          <Property Name="Mode" Value="FirstUpper"/>
+        </Properties>
+      </Converter>
+    </AutoConverter>
+  </AutoConverters>
   <Database>
-    <DbProvider Name="SqlServer"/>
+    <DbProvider Name="${DbProvider}"/>
     <Write Name="WriteDB" ConnectionString="${ConnectionString}"/>
     <Read Name="ReadDb-1" ConnectionString="${ConnectionString}" Weight="100"/>
     <Read Name="ReadDb-2" ConnectionString="${ConnectionString}" Weight="100"/>
@@ -22,6 +59,16 @@
         <Property Name="NamingStrategy" Value="Camel"/>
       </Properties>
     </TypeHandler>
+    <TypeHandler Name="AnsiStringTypeHandler" Type="SmartSql.TypeHandlers.StringTypeHandler,SmartSql">
+      <Properties>
+        <Property Name="DbType" Value="AnsiString"/>
+      </Properties>
+    </TypeHandler>
+    <TypeHandler Name="AnsiStringFixedLengthTypeHandler" Type="SmartSql.TypeHandlers.StringTypeHandler,SmartSql">
+      <Properties>
+        <Property Name="DbType" Value="AnsiStringFixedLength"/>
+      </Properties>
+    </TypeHandler>
     <TypeHandler Name="Json" Type="${JsonTypeHandler}"></TypeHandler>
   </TypeHandlers>
   <TagBuilders>
@@ -30,8 +77,8 @@
   <IdGenerators>
     <IdGenerator Name="SnowflakeId" Type="SnowflakeId">
       <Properties>
-        <Property Name="WorkerIdBits" Value="10"/>
-        <Property Name="WorkerId" Value="888"/>
+        <Property Name="WorkerIdBits" Value="9"/>
+        <Property Name="WorkerId" Value="511"/>
         <Property Name="Sequence" Value="14"/>
       </Properties>
     </IdGenerator>

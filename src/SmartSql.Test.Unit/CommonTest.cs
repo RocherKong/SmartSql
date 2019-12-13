@@ -1,17 +1,7 @@
 using System;
+using System.Data.SqlClient;
+using SmartSql.DataSource;
 using Xunit;
-using SmartSql.TypeHandlers;
-using System.Reflection;
-using System.Data;
-using System.Dynamic;
-using System.Collections;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using Microsoft.Extensions.Logging;
-using Serilog;
-using Serilog.Events;
-using SmartSql.Test.Entities;
 
 namespace SmartSql.Test.Unit
 {
@@ -24,5 +14,9 @@ namespace SmartSql.Test.Unit
         }
     }
 
-
+    public class CacheAttribute : Attribute
+    {
+        public Type Type { get; set; }
+        public string[] Strings { get; set; }
+    }
 }

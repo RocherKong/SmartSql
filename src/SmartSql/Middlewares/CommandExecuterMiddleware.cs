@@ -7,63 +7,51 @@ using Microsoft.Extensions.Logging;
 
 namespace SmartSql.Middlewares
 {
-    public class CommandExecuterMiddleware : IMiddleware
+    public class CommandExecuterMiddleware : AbstractMiddleware
     {
-        public IMiddleware Next { get; set; }
-        private readonly ICommandExecuter _commandExecuter;
+        private ICommandExecuter _commandExecuter;
 
-        public CommandExecuterMiddleware(SmartSqlConfig smartSqlConfig)
+        public override void Invoke<TResult>(ExecutionContext executionContext)
         {
-            _commandExecuter = new CommandExecuter(smartSqlConfig.LoggerFactory.CreateLogger<CommandExecuter>());
-        }
+            switch (executionContext.Type)
+            {
+                case ExecutionType.Execute:
+                {
+                    var recordsAffected = _commandExecuter.ExecuteNonQuery(executionContext);
+                    executionContext.Result.SetData(recordsAffected);
+                    return;
+                }
 
-        public void Invoke<TResult>(ExecutionContext executionContext)
-        {
-            try
-            {
-                switch (executionContext.Type)
+                case ExecutionType.ExecuteScalar:
                 {
-                    case ExecutionType.Execute:
-                        {
-                            var recordsAffected = _commandExecuter.ExecuteNonQuery(executionContext);
-                            executionContext.Result.SetData(recordsAffected);
-                            return;
-                        }
-                    case ExecutionType.ExecuteScalar:
-                        {
-                            ParseExecuteScalarDbValue<TResult>(executionContext);
-                            return;
-                        }
-                    case ExecutionType.GetDataSet:
-                        {
-                            var resultData = _commandExecuter.GetDateSet(executionContext);
-                            executionContext.Result.SetData(resultData);
-                            return;
-                        }
-                    case ExecutionType.GetDataTable:
-                        {
-                            var resultData = _commandExecuter.GetDateTable(executionContext);
-                            executionContext.Result.SetData(resultData);
-                            return;
-                        }
-                    case ExecutionType.Query:
-                    case ExecutionType.QuerySingle:
-                        {
-                            executionContext.DataReaderWrapper = _commandExecuter.ExecuteReader(executionContext);
-                            break;
-                        }
-                    default:
-                        throw new ArgumentOutOfRangeException();
+                    ParseExecuteScalarDbValue<TResult>(executionContext);
+                    return;
                 }
-                Next.Invoke<TResult>(executionContext);
-            }
-            finally
-            {
-                if (executionContext.DataReaderWrapper != null)
+
+                case ExecutionType.GetDataSet:
                 {
-                    executionContext.DataReaderWrapper.Close();
-                    executionContext.DataReaderWrapper.Dispose();
+                    var resultData = _commandExecuter.GetDateSet(executionContext);
+                    executionContext.Result.SetData(resultData);
+                    return;
                 }
+
+                case ExecutionType.GetDataTable:
+                {
+                    var resultData = _commandExecuter.GetDateTable(executionContext);
+                    executionContext.Result.SetData(resultData);
+                    return;
+                }
+
+                case ExecutionType.Query:
+                case ExecutionType.QuerySingle:
+                {
+                    executionContext.DataReaderWrapper = _commandExecuter.ExecuteReader(executionContext);
+                    InvokeNext<TResult>(executionContext);
+                    break;
+                }
+
+                default:
+                    throw new ArgumentOutOfRangeException();
             }
         }
 
@@ -71,6 +59,11 @@ namespace SmartSql.Middlewares
         {
             var singleResult = executionContext.Result as SingleResultContext<TResult>;
             var dbResult = _commandExecuter.ExecuteScalar(executionContext);
+            SetResultData(dbResult, singleResult);
+        }
+
+        private void SetResultData<TResult>(object dbResult, SingleResultContext<TResult> singleResult)
+        {
             if (dbResult == null || dbResult == DBNull.Value)
             {
                 singleResult.SetData(default(TResult));
@@ -79,6 +72,12 @@ namespace SmartSql.Middlewares
             {
                 var convertType = singleResult.ResultType;
                 convertType = Nullable.GetUnderlyingType(convertType) ?? convertType;
+
+                if (convertType.IsInstanceOfType(dbResult))
+                {
+                    singleResult.SetData(dbResult);
+                    return;
+                }
 
                 if (convertType.IsEnum)
                 {
@@ -96,74 +95,59 @@ namespace SmartSql.Middlewares
         {
             var singleResult = executionContext.Result as SingleResultContext<TResult>;
             var dbResult = await _commandExecuter.ExecuteScalarAsync(executionContext);
-            if (dbResult == null || dbResult == DBNull.Value)
-            {
-                singleResult.SetData(default(TResult));
-            }
-            else
-            {
-                var convertType = singleResult.ResultType;
-                convertType = Nullable.GetUnderlyingType(convertType) ?? convertType;
-                if (convertType.IsEnum)
-                {
-                    singleResult.SetData(Enum.ToObject(convertType, dbResult));
-                }
-                else
-                {
-                    singleResult.SetData(Convert.ChangeType(dbResult, convertType));
-                }
-            }
+            SetResultData(dbResult, singleResult);
         }
 
 
-        public async Task InvokeAsync<TResult>(ExecutionContext executionContext)
+        public override async Task InvokeAsync<TResult>(ExecutionContext executionContext)
         {
-            try
+            switch (executionContext.Type)
             {
-                switch (executionContext.Type)
+                case ExecutionType.Execute:
                 {
-                    case ExecutionType.Execute:
-                        {
-                            var recordsAffected = await _commandExecuter.ExecuteNonQueryAsync(executionContext);
-                            executionContext.Result.SetData(recordsAffected);
-                            return;
-                        }
-                    case ExecutionType.ExecuteScalar:
-                        {
-                            await ParseExecuteScalarDbValueAsync<TResult>(executionContext);
-                            return;
-                        }
-                    case ExecutionType.GetDataSet:
-                        {
-                            var resultData = await _commandExecuter.GetDateSetAsync(executionContext);
-                            executionContext.Result.SetData(resultData);
-                            return;
-                        }
-                    case ExecutionType.GetDataTable:
-                        {
-                            var resultData = await _commandExecuter.GetDateTableAsync(executionContext);
-                            executionContext.Result.SetData(resultData);
-                            return;
-                        }
-                    case ExecutionType.Query:
-                    case ExecutionType.QuerySingle:
-                        {
-                            executionContext.DataReaderWrapper = await _commandExecuter.ExecuteReaderAsync(executionContext);
-                            break;
-                        }
-                    default:
-                        throw new ArgumentOutOfRangeException();
+                    var recordsAffected = await _commandExecuter.ExecuteNonQueryAsync(executionContext);
+                    executionContext.Result.SetData(recordsAffected);
+                    return;
                 }
-                Next.Invoke<TResult>(executionContext);
-            }
-            finally
-            {
-                if (executionContext.DataReaderWrapper != null)
+
+                case ExecutionType.ExecuteScalar:
                 {
-                    executionContext.DataReaderWrapper.Close();
-                    executionContext.DataReaderWrapper.Dispose();
+                    await ParseExecuteScalarDbValueAsync<TResult>(executionContext);
+                    return;
                 }
+
+                case ExecutionType.GetDataSet:
+                {
+                    var resultData = await _commandExecuter.GetDateSetAsync(executionContext);
+                    executionContext.Result.SetData(resultData);
+                    return;
+                }
+
+                case ExecutionType.GetDataTable:
+                {
+                    var resultData = await _commandExecuter.GetDateTableAsync(executionContext);
+                    executionContext.Result.SetData(resultData);
+                    return;
+                }
+
+                case ExecutionType.Query:
+                case ExecutionType.QuerySingle:
+                {
+                    executionContext.DataReaderWrapper = await _commandExecuter.ExecuteReaderAsync(executionContext);
+                    await InvokeNextAsync<TResult>(executionContext);
+                    break;
+                }
+
+                default:
+                    throw new ArgumentOutOfRangeException();
             }
         }
+
+        public override void SetupSmartSql(SmartSqlBuilder smartSqlBuilder)
+        {
+            _commandExecuter = smartSqlBuilder.SmartSqlConfig.CommandExecuter;
+        }
+
+        public override int Order => 500;
     }
 }

@@ -9,6 +9,36 @@
   <ItemGroup>
     <None Remove="Maps\User.xml" />
     <None Remove="SmartSqlMapConfig-Embedded.xml" />
+    <None Update="Maps\IsNotPropertyTest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\ForTest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\OrderByTest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\NestTest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\NowTest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\UUIDTest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\DefaultAutoConverter.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\AssignAutoConverter.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\DisabledAutoConverter.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Maps\CustomizeTypeHandlerTest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
@@ -48,7 +78,9 @@
     <ProjectReference Include="..\SmartSql.Cache.Redis\SmartSql.Cache.Redis.csproj" />
     <ProjectReference Include="..\SmartSql.DIExtension\SmartSql.DIExtension.csproj" />
     <ProjectReference Include="..\SmartSql.DyRepository\SmartSql.DyRepository.csproj" />
+    <ProjectReference Include="..\SmartSql.InvokeSync\SmartSql.InvokeSync.csproj" />
     <ProjectReference Include="..\SmartSql.Options\SmartSql.Options.csproj" />
+    <ProjectReference Include="..\SmartSql.Oracle\SmartSql.Oracle.csproj" />
     <ProjectReference Include="..\SmartSql.ScriptTag\SmartSql.ScriptTag.csproj" />
     <ProjectReference Include="..\SmartSql.Test\SmartSql.Test.csproj" />
     <ProjectReference Include="..\SmartSql.TypeHandler.PostgreSql\SmartSql.TypeHandler.PostgreSql.csproj" />
@@ -104,5 +136,8 @@
     <None Update="SmartSqlMapConfig.xml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="DataSource" />
   </ItemGroup>
 </Project>

@@ -1,7 +1,9 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using SmartSql.Exceptions;
 using SmartSql.Reflection;
+using SmartSql.Reflection.TypeConstants;
 
 namespace SmartSql.Deserializer
 {
@@ -14,7 +16,12 @@ namespace SmartSql.Deserializer
             _deserializerFactory = deserializerFactory;
         }
 
-        public TResult ToSinge<TResult>(ExecutionContext executionContext)
+        public bool CanDeserialize(ExecutionContext executionContext, Type resultType, bool isMultiple = false)
+        {
+            return CommonType.IsValueTuple(resultType);
+        }
+
+        public TResult ToSingle<TResult>(ExecutionContext executionContext)
         {
             var valueTupleType = typeof(TResult);
             var resultGenericTypeArguments = valueTupleType.GenericTypeArguments;
@@ -31,7 +38,7 @@ namespace SmartSql.Deserializer
             }
             return (TResult)ValueTupleConvert.Convert(valueTupleType, resultItems);
         }
-        public async Task<TResult> ToSingeAsync<TResult>(ExecutionContext executionContext)
+        public async Task<TResult> ToSingleAsync<TResult>(ExecutionContext executionContext)
         {
             var valueTupleType = typeof(TResult);
             var resultGenericTypeArguments = valueTupleType.GenericTypeArguments;

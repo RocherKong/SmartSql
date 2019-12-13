@@ -5,36 +5,56 @@ using SmartSql.Cache;
 
 namespace SmartSql.Middlewares
 {
-    public class CachingMiddleware : IMiddleware
+    public class CachingMiddleware : AbstractMiddleware
     {
-        private readonly ICacheManager _cacheManager;
-        public IMiddleware Next { get; set; }
-        public CachingMiddleware(SmartSqlConfig smartSqlConfig)
+        private ICacheManager _cacheManager;
+
+        public override void Invoke<TResult>(ExecutionContext executionContext)
         {
-            _cacheManager = smartSqlConfig.CacheManager;
-        }
-        public void Invoke<TResult>(ExecutionContext executionContext)
-        {
-            if (executionContext.DbSession.Transaction == null
-                && _cacheManager.TryGetValue(executionContext, out var cacheItem))
+            if (executionContext.Request.Cache == null)
             {
-                executionContext.Result.SetData(cacheItem, true);
+                InvokeNext<TResult>(executionContext);
                 return;
             }
-            Next.Invoke<TResult>(executionContext);
-            _cacheManager.ExecuteRequest(executionContext);
+
+            if (executionContext.DbSession.Transaction == null
+                && _cacheManager.TryGetCache(executionContext, out var cacheItem))
+            {
+                executionContext.Result.SetData(cacheItem, true);
+            }
+            else
+            {
+                InvokeNext<TResult>(executionContext);
+                _cacheManager.TryAddCache(executionContext);
+            }
         }
 
-        public async Task InvokeAsync<TResult>(ExecutionContext executionContext)
+        public override async Task InvokeAsync<TResult>(ExecutionContext executionContext)
         {
-            if (executionContext.DbSession.Transaction == null
-                && _cacheManager.TryGetValue(executionContext, out var cacheItem))
+            if (executionContext.Request.Cache == null)
             {
-                executionContext.Result.SetData(cacheItem, true);
+                await InvokeNextAsync<TResult>(executionContext);
                 return;
             }
-            await Next.InvokeAsync<TResult>(executionContext);
-            _cacheManager.ExecuteRequest(executionContext);
+
+            if (executionContext.DbSession.Transaction == null
+                && _cacheManager.TryGetCache(executionContext, out var cacheItem))
+            {
+                executionContext.Result.SetData(cacheItem, true);
+            }
+            else
+            {
+                await InvokeNextAsync<TResult>(executionContext);
+                _cacheManager.TryAddCache(executionContext);
+            }
         }
+
+        public override void SetupSmartSql(SmartSqlBuilder smartSqlBuilder)
+        {
+            _cacheManager = smartSqlBuilder.SmartSqlConfig.CacheManager;
+        }
+
+        
+            public override int Order => 200;
     }
 }
